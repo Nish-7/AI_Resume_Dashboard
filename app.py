@@ -3,16 +3,20 @@ import pdfplumber
 from collections import Counter
 import re
 import pandas as pd
+import os
 
+# -----------------------------
 # Optional OpenAI import
+# -----------------------------
 try:
     from openai import OpenAI
-    client = OpenAI(api_key="YOUR_API_KEY_HERE")
+    # Use Streamlit Secrets for API key
+    client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY", ""))
 except:
     client = None
 
 # -----------------------------
-# Functions
+# Extract text from PDF
 # -----------------------------
 def extract_text(file):
     text = ""
@@ -21,33 +25,52 @@ def extract_text(file):
             text += page.extract_text() or ""
     return text
 
+# -----------------------------
+# Resume statistics
+# -----------------------------
 def resume_statistics(resume_text):
-    return len(resume_text.split())
+    words = resume_text.split()
+    return len(words)
 
+# -----------------------------
+# Skills database
+# -----------------------------
 skills = [
     "python", "machine learning", "data analysis", "sql",
-    "deep learning", "nlp", "tensorflow", "pandas",
-    "java", "cloud computing"
+    "deep learning", "nlp", "tensorflow", "pandas", "java",
+    "cloud computing"
 ]
 
+# -----------------------------
+# Detect skills
+# -----------------------------
 def detect_skills(resume_text):
     resume_text = resume_text.lower()
-    return [skill for skill in skills if skill in resume_text]
+    found = [skill for skill in skills if skill in resume_text]
+    return found
 
+# -----------------------------
+# Missing skills
+# -----------------------------
 def missing_skills(found):
     return [skill for skill in skills if skill not in found]
 
+# -----------------------------
+# Extract job keywords
+# -----------------------------
 def extract_keywords(job_description):
     words = re.findall(r'\b[a-zA-Z]+\b', job_description.lower())
-    stopwords = [
-        "the","is","and","to","for","in","a","of","with","on",
-        "we","are","looking","candidate","should","have","will",
-        "team","our","all"
-    ]
+    stopwords = ["the","is","and","to","for","in","a","of","with","on",
+                 "we","are","looking","candidate","should","have","will",
+                 "team","our","all"]
     filtered = [word for word in words if word not in stopwords]
     counts = Counter(filtered)
-    return [word for word, _ in counts.most_common(10)]
+    keywords = [word for word, count in counts.most_common(10)]
+    return keywords
 
+# -----------------------------
+# ATS Score
+# -----------------------------
 def calculate_ats_score(resume_text, job_description):
     resume_text = resume_text.lower()
     job_words = extract_keywords(job_description)
@@ -55,12 +78,18 @@ def calculate_ats_score(resume_text, job_description):
     score = (match_count / len(job_words)) * 100 if job_words else 0
     return round(score, 2)
 
+# -----------------------------
+# Keyword match analysis
+# -----------------------------
 def keyword_match(resume_text, keywords):
     resume_text = resume_text.lower()
     matched = [word for word in keywords if word in resume_text]
     missing = [word for word in keywords if word not in resume_text]
     return matched, missing
 
+# -----------------------------
+# Resume Suggestions
+# -----------------------------
 def generate_resume_suggestions(resume_text, job_description):
     if client:
         try:
@@ -86,10 +115,11 @@ Job Description:
             return response.choices[0].message.content
         except:
             pass
-    # Fallback suggestions
+
+    # Free fallback
     suggestions = []
     words = resume_text.lower()
-    if len(words.split()) < 350:
+    if len(resume_text.split()) < 350:
         suggestions.append("• Increase resume length by adding more project details.")
     if "project" not in words:
         suggestions.append("• Add a projects section to showcase practical work.")
@@ -106,10 +136,10 @@ Job Description:
     return "\n".join(suggestions)
 
 # -----------------------------
-# Streamlit UI (Final Dashboard)
+# Streamlit UI
 # -----------------------------
-st.set_page_config(page_title="AI Resume Dashboard", page_icon="📊", layout="wide")
-st.title("📊 AI-Powered ATS Resume Dashboard")
+st.set_page_config(page_title="AI Resume Dashboard", layout="wide")
+st.title("AI-Powered ATS Resume Analyzer")
 
 uploaded_file = st.file_uploader("Upload Resume (PDF)", type="pdf")
 job_description = st.text_area("Paste Job Description")
@@ -123,77 +153,59 @@ if uploaded_file and job_description:
     score = calculate_ats_score(resume_text, job_description)
     matched_kw, missing_kw = keyword_match(resume_text, keywords)
 
-    # -----------------------------
-    # Resume Overview
-    # -----------------------------
-    st.subheader("Resume Overview")
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.metric("Word Count", word_count)
-    with col2:
-        st.metric("ATS Score", f"{score}%")
-    with col3:
-        if score >= 80:
-            st.success("Excellent Match")
-        elif score >= 60:
-            st.info("Good Match")
-        else:
-            st.warning("Needs Improvement")
+    # Resume Statistics
+    st.subheader("Resume Statistics")
+    st.write("Total Words in Resume:", word_count)
+    if word_count < 300:
+        st.warning("Resume might be too short.")
+    elif word_count > 800:
+        st.warning("Resume might be too long.")
+    else:
+        st.success("Resume length looks good.")
+
+    # ATS Score
+    st.subheader("ATS Resume Score")
     st.progress(score / 100)
+    st.write(f"{score}% match with job description")
+    if score < 40:
+        st.error("Low ATS compatibility. Add more job-related keywords.")
+    elif score < 70:
+        st.warning("Moderate ATS compatibility. Improve alignment.")
+    else:
+        st.success("Strong ATS compatibility.")
 
-    # -----------------------------
-    # Expandable Sections
-    # -----------------------------
-    with st.expander("🔑 Job Keywords Analysis"):
-        st.write("**Top Keywords from Job Description:**")
-        st.write(keywords)
-        st.write("**Matched Keywords:**", matched_kw)
-        st.write("**Missing Keywords:**", missing_kw)
+    # Keywords
+    st.subheader("Important Job Keywords")
+    st.write(keywords)
 
-    with st.expander("🛠 Skills Analysis"):
-        st.write("**Detected Skills:**", detected)
-        st.write("**Missing Skills:**", missing)
-        st.write("⚠ Things You Should Add:")
-        combined_missing = [{"item": kw, "type": "keyword"} for kw in missing_kw] + \
-                           [{"item": skill, "type": "skill"} for skill in missing]
-        if combined_missing:
-            for item in combined_missing:
-                if item["type"] == "keyword":
-                    st.markdown(f"• 🔑 <span title='Job Keyword' style='color:blue'>{item['item']}</span>", unsafe_allow_html=True)
-                else:
-                    st.markdown(f"• ⚡ <span title='Skill' style='color:orange'>{item['item']}</span>", unsafe_allow_html=True)
-        else:
-            st.success("Your resume already contains all key skills and job keywords!")
+    # Recommended Skills to Add
+    st.subheader("Top Skills You Should Add")
+    if missing_kw:
+        for skill in missing_kw[:5]:
+            st.write(f"• {skill}")
+    else:
+        st.success("Your resume already contains most important job keywords!")
 
-    # -----------------------------
-    # Interactive Charts
-    # -----------------------------
-    st.subheader("Skill & Keyword Visualization")
-    skill_chart_data = pd.DataFrame({
-        "Category": ["Detected Skills", "Missing Skills"],
-        "Count": [len(detected), len(missing)],
-        "Items": [", ".join(detected), ", ".join(missing)]
-    })
-    keyword_chart_data = pd.DataFrame({
-        "Category": ["Matched Keywords", "Missing Keywords"],
-        "Count": [len(matched_kw), len(missing_kw)],
-        "Items": [", ".join(matched_kw), ", ".join(missing_kw)]
-    })
+    # Keyword Match
+    st.subheader("Matched Keywords")
+    st.success(matched_kw)
+    st.subheader("Missing Keywords")
+    st.error(missing_kw)
 
-    st.write("**Skills Overview:**")
-    st.bar_chart(skill_chart_data.set_index("Category")["Count"])
-    selected_skill = st.radio("Select skill category to view details", ["Detected Skills", "Missing Skills"])
-    st.table(pd.DataFrame({"Skills": skill_chart_data.loc[skill_chart_data['Category']==selected_skill, "Items"].values[0].split(", ")}))
+    # Skills
+    st.subheader("Detected Skills")
+    st.write(detected)
+    st.subheader("Skills You Should Consider Adding")
+    st.write(missing)
 
-    st.write("**Job Keywords Overview:**")
-    st.bar_chart(keyword_chart_data.set_index("Category")["Count"])
-    selected_kw = st.radio("Select keyword category to view details", ["Matched Keywords", "Missing Keywords"])
-    st.table(pd.DataFrame({"Keywords": keyword_chart_data.loc[keyword_chart_data['Category']==selected_kw, "Items"].values[0].split(", ")}))
+    # Skill Visualization
+    skill_data = {"Category": ["Detected Skills", "Missing Skills"], "Count": [len(detected), len(missing)]}
+    df = pd.DataFrame(skill_data)
+    st.subheader("Skill Match Visualization")
+    st.bar_chart(df.set_index("Category"))
 
-    # -----------------------------
-    # AI Resume Suggestions
-    # -----------------------------
-    with st.expander("💡 AI Resume Improvement Suggestions"):
-        with st.spinner("Generating AI suggestions..."):
-            suggestions = generate_resume_suggestions(resume_text, job_description)
-            st.markdown(suggestions)
+    # Suggestions
+    with st.spinner("Generating AI suggestions..."):
+        suggestions = generate_resume_suggestions(resume_text, job_description)
+    st.subheader("AI Resume Improvement Suggestions")
+    st.markdown(suggestions)
